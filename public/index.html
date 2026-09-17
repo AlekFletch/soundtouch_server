@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SoundTouch Bridge</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📻</text></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>📻 SoundTouch Bridge</h1>
+    <div id="status" class="status">Загрузка…</div>
+  </header>
+
+  <main>
+    <section class="panel" id="speaker-panel">
+      <h2>Колонка</h2>
+      <div class="row">
+        <input id="speaker-host" placeholder="IP колонки, например 192.168.1.50" inputmode="decimal">
+        <button id="save-host">Сохранить</button>
+        <button id="discover" class="secondary">Найти</button>
+      </div>
+      <div id="discover-result" class="hint"></div>
+      <div id="now-playing" class="now-playing"></div>
+      <div class="row controls">
+        <button data-key="POWER" class="secondary">⏻</button>
+        <button data-key="PLAY_PAUSE" class="secondary">⏯</button>
+        <label class="volume">🔊 <input id="volume" type="range" min="0" max="100"></label>
+        <span id="volume-value"></span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Кнопки 1–6</h2>
+      <div id="slots" class="slots"></div>
+    </section>
+  </main>
+
+  <dialog id="picker">
+    <form method="dialog" class="picker">
+      <h2 id="picker-title">Кнопка</h2>
+      <div class="tabs">
+        <button type="button" data-tab="search" class="tab active">Поиск</button>
+        <button type="button" data-tab="manual" class="tab">Ссылка</button>
+      </div>
+
+      <div data-pane="search">
+        <div class="row">
+          <input id="search-q" placeholder="Название: Маяк, Jazz, Relax…">
+          <select id="search-country">
+            <option value="">Все страны</option>
+            <option value="RU">Россия</option>
+            <option value="BY">Беларусь</option>
+            <option value="KZ">Казахстан</option>
+            <option value="UA">Украина</option>
+            <option value="DE">Германия</option>
+            <option value="US">США</option>
+            <option value="GB">Великобритания</option>
+            <option value="FR">Франция</option>
+          </select>
+          <button type="button" id="search-go">Найти</button>
+        </div>
+        <ul id="search-results" class="results"></ul>
+      </div>
+
+      <div data-pane="manual" hidden>
+        <input id="manual-name" placeholder="Название станции">
+        <input id="manual-url" placeholder="Ссылка на поток: http://… или https://… (.mp3, .aac, .pls, .m3u)">
+        <input id="manual-logo" placeholder="Ссылка на логотип (необязательно)">
+        <p class="hint">HLS-потоки (.m3u8) колонка не поддерживает.</p>
+      </div>
+
+      <div class="selected" id="selected">Станция не выбрана</div>
+      <div class="row actions">
+        <button type="button" id="picker-listen" class="secondary">▶ Прослушать на колонке</button>
+        <button type="button" id="picker-save">Сохранить на кнопку</button>
+        <button type="button" id="picker-clear" class="danger">Очистить</button>
+        <button value="cancel" class="secondary">Закрыть</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" hidden></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

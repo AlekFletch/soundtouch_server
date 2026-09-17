@@ -1,0 +1,17 @@
+{
+  "name": "soundtouch-bridge",
+  "version": "0.1.0",
+  "description": "Возвращает кнопки пресетов 1–6 на Bose SoundTouch после отключения облака Bose: локальный мост WebSocket → UPnP + веб-форма настройки радиостанций",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test tests/*.test.js",
+    "probe": "node scripts/probe.js",
+    "fake-speaker": "node scripts/fake-speaker.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT"
+}
