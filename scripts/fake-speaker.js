@@ -1,6 +1,6 @@
 // Эмулятор колонки SoundTouch для разработки и тестов без настоящей колонки.
 //
-//   node scripts/fake-speaker.js [--api 8090] [--ws 18080] [--upnp 8091]
+//   node scripts/fake-speaker.js [--api 8090] [--ws 18080] [--upnp 8091] [--name "Кухня"] [--type "SoundTouch 10"]
 //
 // Эмулирует:
 //   - REST API (порт --api): /info, /now_playing, /presets, /volume, /key, /storePreset
@@ -11,16 +11,25 @@
 // Команды в консоли: 1–6 — короткое нажатие кнопки, h1–h6 — удержание (сохранить текущее), s — состояние.
 //
 // Мост для работы с эмулятором запускать так:
-//   SPEAKER_HOST=127.0.0.1 SOUNDTOUCH_WS_PORT=18080 UPNP_DESCRIPTION_URL=http://127.0.0.1:8091/description.xml npm start
+//   SPEAKERS='[{"host":"127.0.0.1","apiPort":8090,"wsPort":18080,"upnpDescriptionUrl":"http://127.0.0.1:8091/description.xml"}]' npm start
 import http from 'node:http';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { escapeXml, tagText, tagAttr } from '../src/xml.js';
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
-const DEVICE_ID = 'F4E11E000001';
 
-export async function createFakeSpeaker({ host = '127.0.0.1', apiPort = 8090, wsPort = 18080, upnpPort = 8091, rejectStorePreset = false, log = () => {} } = {}) {
+export async function createFakeSpeaker({
+  host = '127.0.0.1',
+  apiPort = 8090,
+  wsPort = 18080,
+  upnpPort = 8091,
+  name = 'Fake SoundTouch',
+  type = 'SoundTouch 20',
+  deviceId: DEVICE_ID = 'F4E11E000001',
+  rejectStorePreset = false,
+  log = () => {},
+} = {}) {
   const state = {
     volume: 30,
     presets: new Map(), // id → { source, location, name }
@@ -145,7 +154,7 @@ export async function createFakeSpeaker({ host = '127.0.0.1', apiPort = 8090, ws
     const b = req.method === 'POST' ? await body(req) : '';
     switch (`${req.method} ${req.url}`) {
       case 'GET /info':
-        return xml(200, `<info deviceID="${DEVICE_ID}"><name>Fake SoundTouch</name><type>SoundTouch 20</type><margeAccountUUID /></info>`);
+        return xml(200, `<info deviceID="${DEVICE_ID}"><name>${escapeXml(name)}</name><type>${escapeXml(type)}</type><margeAccountUUID /></info>`);
       case 'GET /now_playing':
         return xml(200, nowPlayingXml());
       case 'GET /presets':
@@ -189,7 +198,7 @@ export async function createFakeSpeaker({ host = '127.0.0.1', apiPort = 8090, ws
     if (req.method === 'GET' && req.url === '/description.xml') {
       return res.writeHead(200, { 'Content-Type': 'text/xml' }).end(
         '<?xml version="1.0"?><root xmlns="urn:schemas-upnp-org:device-1-0"><device>' +
-          '<deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType><friendlyName>Fake SoundTouch</friendlyName>' +
+          '<deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType><friendlyName>${escapeXml(name)}</friendlyName>' +
           '<serviceList><service><serviceType>urn:schemas-upnp-org:service:RenderingControl:1</serviceType><controlURL>/RenderingControl/Control</controlURL></service>' +
           '<service><serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType><serviceId>urn:upnp-org:serviceId:AVTransport</serviceId>' +
           '<controlURL>/AVTransport/Control</controlURL><eventSubURL>/AVTransport/Event</eventSubURL><SCPDURL>/AVTransport/scpd.xml</SCPDURL></service>' +
@@ -249,11 +258,24 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const i = process.argv.indexOf(`--${name}`);
     return i > 0 ? Number(process.argv[i + 1]) : def;
   };
-  const opts = { apiPort: arg('api', 8090), wsPort: arg('ws', 18080), upnpPort: arg('upnp', 8091), log: (...a) => console.log(...a) };
+  const str = (n, def) => {
+    const i = process.argv.indexOf(`--${n}`);
+    return i > 0 ? process.argv[i + 1] : def;
+  };
+  const opts = {
+    apiPort: arg('api', 8090),
+    wsPort: arg('ws', 18080),
+    upnpPort: arg('upnp', 8091),
+    name: str('name', 'Fake SoundTouch'),
+    type: str('type', 'SoundTouch 20'),
+    log: (...a) => console.log(...a),
+  };
   const fake = await createFakeSpeaker(opts);
   console.log(`Эмулятор SoundTouch запущен: API :${opts.apiPort}, WebSocket :${opts.wsPort}, UPnP ${fake.descriptionUrl}`);
   console.log('Запуск моста для эмулятора:');
-  console.log(`  SPEAKER_HOST=127.0.0.1 SOUNDTOUCH_API_PORT=${opts.apiPort} SOUNDTOUCH_WS_PORT=${opts.wsPort} UPNP_DESCRIPTION_URL=${fake.descriptionUrl} npm start`);
+  const spec = JSON.stringify([{ host: '127.0.0.1', apiPort: opts.apiPort, wsPort: opts.wsPort, upnpDescriptionUrl: fake.descriptionUrl }]);
+  console.log(`  SPEAKERS='${spec}' npm start`);
+  console.log('Вторая колонка: node scripts/fake-speaker.js --api 8092 --ws 18082 --upnp 8093 --name "Fake ST10" --type "SoundTouch 10"');
   console.log('Команды: 1–6 — нажать кнопку, h1–h6 — удержать кнопку, s — состояние');
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', (line) => {

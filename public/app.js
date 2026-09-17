@@ -33,49 +33,140 @@ async function run(button, fn) {
 
 const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-// ---------- Колонка ----------
+// Выбранная колонка запоминается в браузере
+const remember = {
+  get: () => { try { return localStorage.getItem('speaker') || ''; } catch { return ''; } },
+  set: (id) => { try { localStorage.setItem('speaker', id); } catch {} },
+};
 
-let config = null;
+let config = { speakers: [] };
+let statuses = {}; // id → статус из /api/status
+let currentId = remember.get();
+
+const current = () => config.speakers.find((s) => s.id === currentId) || null;
+const speakerLabel = (sp) => sp.name || statuses[sp.id]?.name || sp.host;
+
+// ---------- загрузка и отрисовка ----------
 
 async function loadConfig() {
   config = await api('/api/config');
-  $('#speaker-host').value = config.speakerHost || '';
-  renderSlots();
+  if (!current()) currentId = config.speakers[0]?.id || '';
+  render();
+}
+
+function select(id) {
+  currentId = id;
+  remember.set(id);
+  render();
+  refreshStatus();
+}
+
+function dotClass(st) {
+  if (!st) return '';
+  if (!st.online) return 'bad';
+  return st.bridgeConnected ? 'ok' : 'warn';
+}
+
+function render() {
+  const sp = current();
+
+  $('#speaker-tabs').innerHTML = config.speakers
+    .map((s) => `<button class="speaker-tab${s.id === currentId ? ' active' : ''}" data-speaker="${s.id}" role="tab">
+      <span class="dot ${dotClass(statuses[s.id])}"></span>${escapeHtml(speakerLabel(s))}</button>`)
+    .join('');
+
+  $('#add-speaker').open = config.speakers.length === 0 || $('#add-speaker').open;
+  $('#speaker-detail').hidden = !sp;
+  $('#slots-panel').hidden = !sp;
+  if (!sp) return;
+
+  $('#sp-name').textContent = speakerLabel(sp);
+  $('#slots-title').textContent = `— ${speakerLabel(sp)}`;
+  if (document.activeElement !== $('#sp-host')) $('#sp-host').value = sp.host;
+  if (document.activeElement !== $('#sp-label')) $('#sp-label').value = sp.name || '';
+
+  renderCopy();
+  renderStatus();
+  renderSlots(sp);
+}
+
+function renderCopy() {
+  const others = config.speakers.filter((s) => s.id !== currentId);
+  const selected = $('#copy-from').value;
+  $('#copy-row').hidden = others.length === 0;
+  $('#copy-from').innerHTML = others.map((s) => `<option value="${s.id}">с колонки «${escapeHtml(speakerLabel(s))}»</option>`).join('');
+  if (others.some((s) => s.id === selected)) $('#copy-from').value = selected;
+}
+
+function renderStatus() {
+  const sp = current();
+  if (!sp) return;
+  const st = statuses[sp.id];
+  const el = $('#sp-status');
+  $('#sp-meta').textContent = [st?.type, sp.host].filter(Boolean).join(' · ');
+  if (!st) {
+    el.textContent = 'Проверяю…';
+    el.className = 'status';
+  } else if (!st.online) {
+    el.textContent = 'Недоступна';
+    el.title = st.error || '';
+    el.className = 'status bad';
+  } else {
+    el.textContent = st.bridgeConnected ? 'Кнопки активны' : 'Нет связи с кнопками';
+    el.title = '';
+    el.className = 'status ' + (st.bridgeConnected ? 'ok' : 'warn');
+  }
+  const np = st?.nowPlaying;
+  $('#now-playing').textContent = !np
+    ? ''
+    : np.source === 'STANDBY'
+      ? 'Колонка в режиме ожидания'
+      : `Сейчас: ${[np.station, np.artist, np.track].filter((v, i, a) => v && a.indexOf(v) === i).join(' — ') || np.source} (${np.playStatus || np.source})`;
+  if (typeof st?.volume === 'number' && document.activeElement !== $('#volume')) {
+    $('#volume').value = st.volume;
+    $('#volume-value').textContent = st.volume;
+  }
 }
 
 async function refreshStatus() {
   try {
-    const s = await api('/api/status');
-    const el = $('#status');
-    if (!s.speakerHost) {
-      el.textContent = 'Укажите IP колонки';
-      el.className = 'status warn';
-    } else if (!s.online) {
-      el.textContent = `Колонка ${s.speakerHost} недоступна`;
-      el.className = 'status bad';
-    } else {
-      el.textContent = `${s.name} · ${s.bridgeConnected ? 'кнопки активны' : 'нет связи с кнопками'}`;
-      el.className = 'status ' + (s.bridgeConnected ? 'ok' : 'warn');
+    const list = await api('/api/status');
+    statuses = Object.fromEntries(list.map((s) => [s.id, s]));
+    // точки в вкладках и названия
+    document.querySelectorAll('.speaker-tab').forEach((tab) => {
+      const s = config.speakers.find((x) => x.id === tab.dataset.speaker);
+      if (s) tab.innerHTML = `<span class="dot ${dotClass(statuses[s.id])}"></span>${escapeHtml(speakerLabel(s))}`;
+    });
+    const sp = current();
+    if (sp) {
+      $('#sp-name').textContent = speakerLabel(sp);
+      $('#slots-title').textContent = `— ${speakerLabel(sp)}`;
+      if (document.activeElement !== $('#copy-from')) renderCopy();
     }
-    const np = s.nowPlaying;
-    $('#now-playing').textContent = np
-      ? np.source === 'STANDBY' ? 'Колонка в режиме ожидания' : `Сейчас: ${[np.station, np.artist, np.track].filter(Boolean).join(' — ') || np.source} (${np.playStatus || np.source})`
-      : '';
-    if (typeof s.volume === 'number' && document.activeElement !== $('#volume')) {
-      $('#volume').value = s.volume;
-      $('#volume-value').textContent = s.volume;
-    }
+    renderStatus();
   } catch {
-    $('#status').textContent = 'Мост недоступен';
-    $('#status').className = 'status bad';
+    $('#sp-status').textContent = 'Мост недоступен';
+    $('#sp-status').className = 'status bad';
   }
 }
 
-$('#save-host').onclick = (e) => run(e.target, async () => {
-  config = await api('/api/config', { speakerHost: $('#speaker-host').value.trim() });
-  toast('IP колонки сохранён');
-  refreshStatus();
-});
+// ---------- колонки ----------
+
+$('#speaker-tabs').onclick = (e) => {
+  const tab = e.target.closest('[data-speaker]');
+  if (tab) select(tab.dataset.speaker);
+};
+
+async function addSpeaker(host) {
+  const sp = await api('/api/speakers', { host });
+  await loadConfig();
+  $('#new-host').value = '';
+  $('#add-speaker').open = false;
+  select(sp.id);
+  toast(`Колонка «${speakerLabel(sp)}» добавлена`);
+}
+
+$('#add-host').onclick = (e) => run(e.target, () => addSpeaker($('#new-host').value.trim()));
 
 $('#discover').onclick = (e) => run(e.target, async () => {
   $('#discover-result').textContent = 'Ищу колонки в сети…';
@@ -85,7 +176,9 @@ $('#discover').onclick = (e) => run(e.target, async () => {
     return;
   }
   $('#discover-result').innerHTML = 'Найдено: ' + speakers
-    .map((s) => `<a href="#" data-host="${escapeHtml(s.host)}">${escapeHtml(s.name)} (${escapeHtml(s.host)})</a>`)
+    .map((s) => s.added
+      ? `${escapeHtml(s.name)} (${escapeHtml(s.host)}) — уже добавлена`
+      : `<a href="#" data-host="${escapeHtml(s.host)}">${escapeHtml(s.name)} (${escapeHtml(s.host)}) — добавить</a>`)
     .join(', ');
 });
 
@@ -93,27 +186,56 @@ $('#discover-result').onclick = (e) => {
   const host = e.target.dataset?.host;
   if (host) {
     e.preventDefault();
-    $('#speaker-host').value = host;
-    $('#save-host').click();
+    run(null, () => addSpeaker(host));
   }
+};
+
+$('#sp-save').onclick = (e) => run(e.target, async () => {
+  await api('/api/speakers/update', { id: currentId, host: $('#sp-host').value.trim(), name: $('#sp-label').value.trim() });
+  await loadConfig();
+  refreshStatus();
+  toast('Сохранено');
+});
+
+$('#sp-remove').onclick = (e) => {
+  const sp = current();
+  if (!sp || !confirm(`Удалить колонку «${speakerLabel(sp)}» и её станции из моста?`)) return;
+  run(e.target, async () => {
+    await api('/api/speakers/remove', { id: sp.id });
+    currentId = '';
+    await loadConfig();
+    toast('Колонка удалена');
+  });
 };
 
 document.querySelectorAll('[data-key]').forEach((btn) => {
   btn.onclick = () => run(btn, async () => {
-    await api('/api/key', { key: btn.dataset.key });
+    await api('/api/key', { speaker: currentId, key: btn.dataset.key });
     setTimeout(refreshStatus, 800);
   });
 });
 
 $('#volume').oninput = (e) => ($('#volume-value').textContent = e.target.value);
-$('#volume').onchange = (e) => run(null, () => api('/api/volume', { volume: Number(e.target.value) }));
+$('#volume').onchange = (e) => run(null, () => api('/api/volume', { speaker: currentId, volume: Number(e.target.value) }));
 
-// ---------- Кнопки 1–6 ----------
+$('#copy-go').onclick = (e) => {
+  const from = config.speakers.find((s) => s.id === $('#copy-from').value);
+  const to = current();
+  if (!from || !to || !confirm(`Заменить все 6 кнопок колонки «${speakerLabel(to)}» станциями с «${speakerLabel(from)}»?`)) return;
+  run(e.target, async () => {
+    const r = await api('/api/slots/copy', { from: from.id, to: to.id });
+    await loadConfig();
+    if (r.warning) toast(r.warning, true);
+    else toast('Станции скопированы');
+  });
+};
 
-function renderSlots() {
+// ---------- кнопки 1–6 ----------
+
+function renderSlots(sp) {
   const html = [];
   for (let n = 1; n <= 6; n++) {
-    const s = config.slots[n];
+    const s = sp.slots[n];
     html.push(`
       <div class="slot">
         <div class="slot-num">${n}</div>
@@ -123,7 +245,7 @@ function renderSlots() {
           ${s ? `<div class="slot-url">${escapeHtml(s.url)}</div>` : ''}
           <div class="slot-actions">
             <button data-edit="${n}">${s ? 'Изменить' : 'Настроить'}</button>
-            ${s ? `<button class="secondary" data-play="${n}">▶</button>` : ''}
+            ${s ? `<button class="secondary" data-play="${n}" title="Включить на колонке">▶</button>` : ''}
           </div>
         </div>
       </div>`);
@@ -136,13 +258,13 @@ $('#slots').onclick = (e) => {
   const play = e.target.dataset.play;
   if (edit) openPicker(Number(edit));
   if (play) run(e.target, async () => {
-    await api('/api/slot/play', { slot: Number(play) });
+    await api('/api/slot/play', { speaker: currentId, slot: Number(play) });
     toast('Включаю…');
     setTimeout(refreshStatus, 2000);
   });
 };
 
-// ---------- Выбор станции ----------
+// ---------- выбор станции ----------
 
 let pickerSlot = 0;
 let chosen = null;
@@ -171,10 +293,11 @@ function updateSelected() {
 ['#manual-name', '#manual-url', '#manual-logo'].forEach((id) => ($(id).oninput = updateSelected));
 
 function openPicker(n) {
+  const sp = current();
   pickerSlot = n;
-  const s = config.slots[n];
+  const s = sp.slots[n];
   chosen = s;
-  $('#picker-title').textContent = `Кнопка ${n}`;
+  $('#picker-title').textContent = `${speakerLabel(sp)} · кнопка ${n}`;
   $('#manual-name').value = s?.name || '';
   $('#manual-url').value = s?.url || '';
   $('#manual-logo').value = s?.favicon || '';
@@ -215,6 +338,9 @@ $('#search-q').addEventListener('keydown', (e) => {
     doSearch();
   }
 });
+$('#new-host').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('#add-host').click();
+});
 $('#search-results').onclick = (e) => {
   const li = e.target.closest('li[data-i]');
   if (!li) return;
@@ -226,7 +352,7 @@ $('#search-results').onclick = (e) => {
 $('#picker-listen').onclick = (e) => run(e.target, async () => {
   const s = currentStation();
   if (!s) throw new Error('Сначала выберите станцию');
-  await api('/api/play', s);
+  await api('/api/play', { speaker: currentId, ...s });
   toast('Включаю на колонке…');
   setTimeout(refreshStatus, 2000);
 });
@@ -234,23 +360,23 @@ $('#picker-listen').onclick = (e) => run(e.target, async () => {
 $('#picker-save').onclick = (e) => run(e.target, async () => {
   const s = currentStation();
   if (!s) throw new Error('Сначала выберите станцию');
-  const r = await api('/api/slot', { slot: pickerSlot, ...s });
-  config.slots[pickerSlot] = r.station;
-  renderSlots();
+  const r = await api('/api/slot', { speaker: currentId, slot: pickerSlot, ...s });
+  current().slots[pickerSlot] = r.station;
+  renderSlots(current());
   $('#picker').close();
   if (r.warning) toast(r.warning, true);
   else toast(`«${r.station.name}» сохранена на кнопку ${pickerSlot}`);
 });
 
 $('#picker-clear').onclick = (e) => run(e.target, async () => {
-  await api('/api/slot', { slot: pickerSlot, url: '' });
-  config.slots[pickerSlot] = null;
-  renderSlots();
+  await api('/api/slot', { speaker: currentId, slot: pickerSlot, url: '' });
+  current().slots[pickerSlot] = null;
+  renderSlots(current());
   $('#picker').close();
   toast(`Кнопка ${pickerSlot} очищена`);
 });
 
-// ---------- Старт ----------
+// ---------- старт ----------
 
 await loadConfig().catch((err) => toast(err.message, true));
 refreshStatus();

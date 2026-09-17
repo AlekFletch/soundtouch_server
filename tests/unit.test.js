@@ -52,3 +52,24 @@ test('parsePlaylist: HLS отвергается понятной ошибкой'
 test('parsePlaylist: пустой плейлист', () => {
   assert.throws(() => parsePlaylist('[playlist]\nNumberOfEntries=0\n', 'http://x/'), /не найден/);
 });
+
+test('store: старый формат настроек (одна колонка) переносится в список колонок', async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { execFileSync } = await import('node:child_process');
+  const dir = mkdtempSync(join(tmpdir(), 'stb-store-'));
+  const file = join(dir, 'config.json');
+  const station = { name: 'Old FM', url: 'http://old/stream', favicon: '' };
+  writeFileSync(file, JSON.stringify({ speakerHost: '10.0.0.5', port: 8000, slots: { 2: station } }));
+  const env = { ...process.env, CONFIG_FILE: file };
+  for (const k of ['SPEAKER_HOST', 'SPEAKERS', 'UPNP_DESCRIPTION_URL', 'PORT']) delete env[k];
+  const out = execFileSync(process.execPath, ['--input-type=module', '-e', "import('./src/store.js').then((s) => console.log(JSON.stringify(s.getConfig())))"], { env, encoding: 'utf8' });
+  rmSync(dir, { recursive: true, force: true });
+  const cfg = JSON.parse(out);
+  assert.equal(cfg.speakerHost, undefined);
+  assert.equal(cfg.speakers.length, 1);
+  assert.equal(cfg.speakers[0].host, '10.0.0.5');
+  assert.deepEqual(cfg.speakers[0].slots[2], station);
+  assert.equal(cfg.speakers[0].slots[1], null);
+});

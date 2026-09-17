@@ -98,3 +98,22 @@ dialog::backdrop { background: rgba(0, 0, 0, .5); }
 
 .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); max-width: calc(100vw - 32px); padding: 10px 16px; border-radius: 10px; background: var(--text); color: var(--bg); z-index: 10; }
 .toast.error { background: var(--danger); color: #fff; }
+
+/* ---------- колонки ---------- */
+header { justify-content: flex-start; }
+.speaker-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.speaker-tab { display: flex; align-items: center; gap: 8px; background: transparent; color: var(--text); border-color: var(--border); }
+.speaker-tab.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.ok { background: var(--ok); }
+.dot.warn { background: var(--warn); }
+.dot.bad { background: var(--danger); }
+details { margin: 8px 0; }
+summary { cursor: pointer; color: var(--accent); padding: 4px 0; }
+details .row { margin-top: 8px; }
+#discover-result a { color: var(--accent); }
+.speaker-head { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: center; margin-top: 8px; }
+.speaker-name { font-size: 1.2rem; font-weight: 600; }
+.speaker-settings summary { color: var(--muted); font-size: .9rem; }
+.slots-head { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.slots-head h2 { margin: 0; }

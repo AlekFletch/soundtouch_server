@@ -10,29 +10,57 @@
 <body>
   <header>
     <h1>📻 SoundTouch Bridge</h1>
-    <div id="status" class="status">Загрузка…</div>
   </header>
 
   <main>
-    <section class="panel" id="speaker-panel">
-      <h2>Колонка</h2>
-      <div class="row">
-        <input id="speaker-host" placeholder="IP колонки, например 192.168.1.50" inputmode="decimal">
-        <button id="save-host">Сохранить</button>
-        <button id="discover" class="secondary">Найти</button>
-      </div>
-      <div id="discover-result" class="hint"></div>
-      <div id="now-playing" class="now-playing"></div>
-      <div class="row controls">
-        <button data-key="POWER" class="secondary">⏻</button>
-        <button data-key="PLAY_PAUSE" class="secondary">⏯</button>
-        <label class="volume">🔊 <input id="volume" type="range" min="0" max="100"></label>
-        <span id="volume-value"></span>
+    <section class="panel">
+      <div class="speaker-tabs" id="speaker-tabs" role="tablist"></div>
+
+      <details id="add-speaker">
+        <summary>＋ Добавить колонку</summary>
+        <div class="row">
+          <input id="new-host" placeholder="IP колонки, например 192.168.1.50" inputmode="decimal">
+          <button id="add-host">Добавить</button>
+          <button id="discover" class="secondary">Найти в сети</button>
+        </div>
+        <div id="discover-result" class="hint"></div>
+      </details>
+
+      <div id="speaker-detail" hidden>
+        <div class="speaker-head">
+          <div>
+            <div class="speaker-name" id="sp-name"></div>
+            <div class="hint" id="sp-meta"></div>
+          </div>
+          <div id="sp-status" class="status"></div>
+        </div>
+        <div id="now-playing" class="now-playing"></div>
+        <div class="row controls">
+          <button data-key="POWER" class="secondary">Питание</button>
+          <button data-key="PLAY_PAUSE" class="secondary">Пауза / Играть</button>
+          <label class="volume">🔊 <input id="volume" type="range" min="0" max="100"></label>
+          <span id="volume-value"></span>
+        </div>
+        <details class="speaker-settings">
+          <summary>Настройки колонки</summary>
+          <div class="row">
+            <input id="sp-host" placeholder="IP колонки">
+            <input id="sp-label" placeholder="Название (например, Кухня)">
+            <button id="sp-save">Сохранить</button>
+            <button id="sp-remove" class="danger">Удалить</button>
+          </div>
+        </details>
       </div>
     </section>
 
-    <section class="panel">
-      <h2>Кнопки 1–6</h2>
+    <section class="panel" id="slots-panel" hidden>
+      <div class="slots-head">
+        <h2>Кнопки 1–6 <span id="slots-title" class="hint"></span></h2>
+        <div class="row" id="copy-row" hidden>
+          <select id="copy-from"></select>
+          <button id="copy-go" class="secondary">Скопировать станции</button>
+        </div>
+      </div>
       <div id="slots" class="slots"></div>
     </section>
   </main>
@@ -47,7 +75,7 @@
 
       <div data-pane="search">
         <div class="row">
-          <input id="search-q" placeholder="Название: Маяк, Jazz, Relax…">
+          <input id="search-q" type="search" placeholder="Название: Маяк, Jazz, Relax…">
           <select id="search-country">
             <option value="">Все страны</option>
             <option value="RU">Россия</option>

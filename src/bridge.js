@@ -1,4 +1,4 @@
-// Мост: слушает WebSocket колонки и по нажатию кнопки 1–6 включает станцию через UPnP
+// Мост одной колонки: слушает её WebSocket и сообщает о нажатиях кнопок 1–6 и изменении пресетов
 import { EventEmitter } from 'node:events';
 import { tagAttr, tagBlocks } from './xml.js';
 
@@ -10,7 +10,7 @@ const DEBOUNCE_MS = 1000;
 
 export class Bridge extends EventEmitter {
   #ws = null;
-  #host = '';
+  #target = null; // { host, wsPort, label }
   #retryDelay = RECONNECT_MIN;
   #retryTimer = null;
   #lastPress = { id: 0, at: 0 };
@@ -25,15 +25,16 @@ export class Bridge extends EventEmitter {
     this.log = log;
   }
 
-  start(host) {
+  // target: { host, wsPort?, label? }
+  start(target) {
     this.stop();
-    this.#host = host;
-    if (host) this.#connect();
+    this.#target = target?.host ? target : null;
+    if (this.#target) this.#connect();
   }
 
   stop() {
     clearTimeout(this.#retryTimer);
-    this.#host = '';
+    this.#target = null;
     if (this.#ws) {
       this.#ws.onclose = null;
       this.#ws.close();
@@ -50,18 +51,19 @@ export class Bridge extends EventEmitter {
   }
 
   #connect() {
-    const host = this.#host;
+    const { host, wsPort = WS_PORT } = this.#target;
+    const label = this.#label();
     let ws;
     try {
-      ws = new WebSocket(`ws://${host}:${WS_PORT}`, WS_PROTOCOL);
+      ws = new WebSocket(`ws://${host}:${wsPort}`, WS_PROTOCOL);
     } catch (err) {
-      this.log(`[bridge] не удалось открыть WebSocket: ${err.message}`);
+      this.log(`[${label}] не удалось открыть WebSocket: ${err.message}`);
       return this.#scheduleReconnect();
     }
     this.#ws = ws;
 
     ws.onopen = () => {
-      this.log(`[bridge] подключено к ${host}`);
+      this.log(`[${label}] подключено к ${host}`);
       this.#retryDelay = RECONNECT_MIN;
       this.#setConnected(true);
     };
@@ -71,14 +73,18 @@ export class Bridge extends EventEmitter {
       if (this.#ws !== ws) return;
       this.#ws = null;
       this.#setConnected(false);
-      this.log(`[bridge] соединение с ${host} потеряно, повтор через ${this.#retryDelay / 1000} с`);
+      this.log(`[${label}] соединение с ${host} потеряно, повтор через ${this.#retryDelay / 1000} с`);
       this.#scheduleReconnect();
     };
   }
 
+  #label() {
+    return this.#target?.label || this.#target?.host || 'bridge';
+  }
+
   #scheduleReconnect() {
     clearTimeout(this.#retryTimer);
-    this.#retryTimer = setTimeout(() => this.#host && this.#connect(), this.#retryDelay);
+    this.#retryTimer = setTimeout(() => this.#target && this.#connect(), this.#retryDelay);
     this.#retryDelay = Math.min(this.#retryDelay * 2, RECONNECT_MAX);
   }
 
@@ -100,7 +106,7 @@ export class Bridge extends EventEmitter {
         source: tagAttr(p, 'ContentItem', 'source'),
         location: tagAttr(p, 'ContentItem', 'location'),
       }));
-      Promise.resolve(this.onPresetsUpdated?.(presets)).catch((err) => this.log(`[bridge] пресеты: ${err.message}`));
+      Promise.resolve(this.onPresetsUpdated?.(presets)).catch((err) => this.log(`[${this.#label()}] пресеты: ${err.message}`));
     }
   }
 
@@ -108,7 +114,7 @@ export class Bridge extends EventEmitter {
     const now = Date.now();
     if (this.#lastPress.id === id && now - this.#lastPress.at < DEBOUNCE_MS) return;
     this.#lastPress = { id, at: now };
-    this.log(`[bridge] нажата кнопка ${id}`);
-    Promise.resolve(this.onPreset(id)).catch((err) => this.log(`[bridge] кнопка ${id}: ${err.message}`));
+    this.log(`[${this.#label()}] нажата кнопка ${id}`);
+    Promise.resolve(this.onPreset(id)).catch((err) => this.log(`[${this.#label()}] кнопка ${id}: ${err.message}`));
   }
 }
