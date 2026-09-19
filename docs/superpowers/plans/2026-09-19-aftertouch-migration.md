@@ -71,7 +71,7 @@ mkdir -p /c/Claude/aftertouch && cd /c/Claude/aftertouch && for f in soundtouch-
 ### Task 3: Добавить колонки и сделать Sync (колонки не меняются)
 
 - [ ] **Step 1:** в интерфейсе AfterTouch (Devices) добавить обе колонки по IP.
-- [ ] **Step 2:** выполнить Sync для каждой. Проверить, что появились `data/default/devices/<SERIAL>/SoundTouchSdkPrivateCfg.xml` и `hosts` (серийные номера видны в `/info`).
+- [x] **Step 2:** выполнить Sync для каждой. Выполнено 2026-09-19: SoundTouch 20 (6 пресетов, 50 недавних, 10 источников), SoundTouch 10 (1 пресет, 8 источников). Данные лежат в `~/aftertouch/data/accounts/<аккаунт>/devices/<MAC>/` на планшете. `SoundTouchSdkPrivateCfg.xml` и `hosts` при Sync НЕ снимаются: копия делается при SSH-миграции; для telnet-миграции файловой копии нет, откат делается записью четырёх исходных URL (сохранены в `data/backup/soundtouch10-original-urls.txt`).
 - [ ] **Step 3:** сравнить пресеты SoundTouch 20 в AfterTouch с `data/backup/soundtouch20-presets.xml`.
 - [ ] **Step 4:** ответить на открытый вопрос №3 спецификации: пресеты хранятся отдельно для каждой колонки или общие. Записать в спецификацию.
 
