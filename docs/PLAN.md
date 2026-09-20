@@ -161,3 +161,11 @@ Node.js 22+, без нативных зависимостей: `node:http`, `nod
 Уточнение по кнопке 2: у Radio Record есть собственный канал «Workout» (`Бит для спортивного тонуса`). Адреса берутся из `https://www.radiorecord.ru/api/stations/` (поле `prefix`), поток — `http://radiorecord.hostingradio.ru/workout96.aacp`. Поставлен на обе колонки вместо `Pump'n'Klubb`, обе играют.
 
 Подводный камень: если колонка в этот момент играет тот же слот, `POST /storePreset` отвечает 200, но запись не применяется — старая станция остаётся. Перед записью колонку нужно остановить (`key send --key POWER`), потом проверить `/presets`.
+
+## Кнопка 5 — lofi (2026-09-20)
+
+Официальная Lofi Girl вещает только через YouTube: ни Icecast, ни Shoutcast у неё нет (`lofigirl.com` и открытый клиент `lofimusic.app` играют видеопоток), поэтому колонкам её отдать нечем. Проверенные ретрансляции: `stream.zeno.fm` отпадает — снова `Transfer-Encoding: chunked`.
+
+Поставлено: **Lofi Radio** — `http://boxradio-edge-00.streamafrica.net/lofi` (Icecast, `audio/mpeg`, без chunked). Обе колонки играют одновременно. Запасные варианты того же типа: `http://lofi.stream.laut.fm/lofi` (laut.fm, 128 кбит) и `http://radiorecord.hostingradio.ru/lofi96.aacp` (Record Lo-Fi).
+
+Итог по кнопкам обеих колонок: 1 «Радио Романтика», 2 «Record Workout», 3 «Ретро Хит», 4 «101.ru Relax Gold», 5 «Lofi Radio», 6 «Relax.fm для офиса». Слот 4 на SoundTouch 10 держится на старой ссылке 101.ru с токеном — когда он протухнет, менять так же, через `scripts/set-preset.sh`.
