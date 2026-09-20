@@ -11,18 +11,24 @@
 # на самом устройстве) и не воскрешает станции с протухшими ссылками.
 set -uo pipefail
 
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BACKUP_DIR="$REPO_DIR/data/backup"
+CONF_FILE="$REPO_DIR/data/network.conf"           # сюда запоминаем введённые вручную адреса
+STAMP="$(date '+%Y-%m-%d-%H%M%S')"
+
+# Адреса, введённые в прошлый раз, имеют приоритет над заводскими умолчаниями.
+SAVED_LAST_OCTET=""; SAVED_SPEAKER_OCTETS=""
+# shellcheck disable=SC1090
+[ -f "$CONF_FILE" ] && . "$CONF_FILE"
+
 SSH_KEY="${SSH_KEY:-C:/Users/Konnov/.ssh/id_tablet}"
 SSH_USER="${SSH_USER:-u0_a113}"
 SSH_PORT="${SSH_PORT:-8022}"
 SSH_ALIAS="${SSH_ALIAS:-[10.109.159.48]:8022}"   # под этим именем ключ лежит в known_hosts
 KNOWN_HOSTS="${KNOWN_HOSTS:-C:/Users/Konnov/.ssh/known_hosts_tablet}"
-LAST_OCTET="${LAST_OCTET:-161}"                   # договорённость: сервер всегда .161
-SPEAKER_OCTETS="${SPEAKER_OCTETS:-11 179}"        # где обычно живут колонки
+LAST_OCTET="${LAST_OCTET:-${SAVED_LAST_OCTET:-161}}"            # обычно планшет на .161
+SPEAKER_OCTETS="${SPEAKER_OCTETS:-${SAVED_SPEAKER_OCTETS:-11 179}}"  # где обычно живут колонки
 CLI='./soundtouch-cli-v0.136.0-linux-arm64'
-
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BACKUP_DIR="$REPO_DIR/data/backup"
-STAMP="$(date '+%Y-%m-%d-%H%M%S')"
 
 SERVER_IP=""
 CHANGED=0
@@ -47,32 +53,94 @@ http_code() { curl -s -m "${2:-6}" -o /dev/null -w '%{http_code}' "$1" 2>/dev/nu
 
 # ---------------------------------------------------------------- шаг 1: сеть
 
-find_server() {
-  step "Шаг 1. Ищу сервер в текущей сети"
-  local prefixes ip cand
-  prefixes=$(ipconfig 2>/dev/null | tr -d '\r' \
+local_prefixes() { # подсети всех сетевых адаптеров компьютера, без последнего октета
+  ipconfig 2>/dev/null | tr -d '\r' \
     | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' \
     | grep -vE '^(255|0)\.' \
-    | sed -E 's/\.[0-9]+$//' | sort -u)
+    | sed -E 's/\.[0-9]+$//' | sort -u
+}
 
-  if [ -z "$prefixes" ]; then
+# Спрашивать адреса можно только когда есть кому отвечать.
+# ASK=1 включает вопросы и без терминала — этим прогоняются проверки.
+interactive() { [ -t 0 ] || [ "${ASK:-0}" = "1" ]; }
+
+remember() { # запомнить введённые адреса, чтобы в следующий раз не спрашивать
+  mkdir -p "$(dirname "$CONF_FILE")" 2>/dev/null
+  {
+    echo "# Адреса, введённые вручную при последней перенастройке ($STAMP)."
+    echo "# Файл читается скриптом при запуске; удали его, чтобы вернуть умолчания."
+    echo "SAVED_LAST_OCTET=\"$LAST_OCTET\""
+    echo "SAVED_SPEAKER_OCTETS=\"$SPEAKER_OCTETS\""
+  } > "$CONF_FILE" 2>/dev/null
+}
+
+probe_server() { # 0, если по адресу отвечает сервер или хотя бы SSH планшета
+  local cand="$1"
+  [ "$(http_code "http://$cand:8000/" 4)" = "200" ] && { SERVER_IP="$cand"; return 0; }
+  SERVER_IP="$cand" ssh_t 'echo ok' >/dev/null 2>&1 && { SERVER_IP="$cand"; return 0; }
+  SERVER_IP=""
+  return 1
+}
+
+# Превращает ввод пользователя в список адресов-кандидатов.
+# Принимает как последние цифры («161»), так и полный адрес («192.168.1.50»).
+expand_input() {
+  local raw="$1" prefix
+  case "$raw" in
+    *.*.*.*) printf '%s\n' "$raw" ;;
+    *[!0-9]*|'') ;;                       # мусор — кандидатов нет
+    *) for prefix in $(local_prefixes); do printf '%s.%s\n' "$prefix" "$raw"; done ;;
+  esac
+}
+
+ask_server() { # спросить адрес планшета у пользователя
+  local raw cand tries
+  say ""
+  say "  Планшет не найден автоматически."
+  say "  Подсети этого компьютера: $(local_prefixes | sed 's/$/.x/' | tr '\n' ' ')"
+  say "  Посмотри в настройках роутера, какой адрес у планшета, и введи его."
+  say "  Можно только последние цифры (например 161) или адрес целиком"
+  say "  (например 192.168.1.50). Пустая строка — выйти."
+
+  for tries in 1 2 3; do
+    printf '  Адрес планшета: '
+    read -r raw || return 1
+    [ -z "$raw" ] && return 1
+
+    for cand in $(expand_input "$raw"); do
+      printf '    пробую %s ... ' "$cand"
+      if probe_server "$cand"; then
+        say "есть"
+        LAST_OCTET="${cand##*.}"
+        remember
+        return 0
+      fi
+      say "нет"
+    done
+    say "  По этому адресу планшет не отвечает. Проверь, что он включён и разблокирован."
+  done
+  return 1
+}
+
+find_server() {
+  step "Шаг 1. Ищу сервер в текущей сети"
+  local prefix cand
+
+  if [ -z "$(local_prefixes)" ]; then
     warn "не удалось прочитать адреса сетевых адаптеров (ipconfig)"
-    return 1
   fi
 
-  for ip in $prefixes; do
-    cand="$ip.$LAST_OCTET"
+  for prefix in $(local_prefixes); do
+    cand="$prefix.$LAST_OCTET"
     printf '  пробую %s ... ' "$cand"
-    if [ "$(http_code "http://$cand:8000/" 4)" = "200" ]; then
-      say "сервер отвечает"
-      SERVER_IP="$cand"; return 0
-    fi
-    if SERVER_IP="$cand" ssh_t 'echo ok' >/dev/null 2>&1; then
-      say "SSH есть, но служба не отвечает"
-      SERVER_IP="$cand"; return 0
+    if probe_server "$cand"; then
+      say "отвечает"
+      return 0
     fi
     say "нет"
   done
+
+  interactive && ask_server && return 0
 
   SERVER_IP=""
   return 1
@@ -160,8 +228,55 @@ find_speakers() {
   done
 
   SPEAKERS="${found# }"
+
+  if interactive; then
+    case "$(printf '%s\n' $SPEAKERS | grep -c .)" in
+      0) ask_speakers "нет"  ;;
+      1) ask_speakers "одна" ;;
+    esac
+  fi
+
   [ -z "$SPEAKERS" ] && { warn "колонки не найдены: проверь, что они подключены к этой же сети"; return 1; }
   return 0
+}
+
+# Спрашивает адреса колонок, когда автопоиск нашёл не всё.
+# Принимает несколько значений через пробел: «11 179» или полные адреса.
+ask_speakers() {
+  local how="$1" raw item cand name added=""
+  say ""
+  case "$how" in
+    нет)  say "  Колонки не найдены по обычным адресам." ;;
+    одна) say "  Нашлась только одна колонка." ;;
+  esac
+  say "  Посмотри в настройках роутера адреса колонок и введи их через пробел."
+  say "  Можно только последние цифры (например 11 179) или адреса целиком."
+  say "  Пустая строка — продолжить с тем, что нашлось."
+  printf '  Адреса колонок: '
+  read -r raw || return 0
+  [ -z "$raw" ] && return 0
+
+  for item in $raw; do
+    for cand in $(expand_input "$item"); do
+      case " $SPEAKERS $added " in *" $cand "*) continue ;; esac
+      name=$(curl -s -m 5 "http://$cand:8090/info" 2>/dev/null | grep -o '<name>[^<]*' | sed 's/<name>//')
+      if [ -n "$name" ]; then
+        say "    $cand — $name"
+        added="$added $cand"
+        break
+      fi
+    done
+  done
+
+  if [ -n "$added" ]; then
+    SPEAKERS="$(printf '%s %s' "$SPEAKERS" "${added# }" | sed 's/^ *//; s/  */ /g')"
+    # запоминаем последние цифры, чтобы в следующий раз найти сразу
+    SPEAKER_OCTETS="$(printf '%s\n' $SPEAKERS | sed 's/.*\.//' | sort -un | tr '\n' ' ')"
+    SPEAKER_OCTETS="${SPEAKER_OCTETS% }"
+    remember
+  else
+    say "    по этим адресам колонки не отвечают"
+  fi
 }
 
 # ------------------------------------------------- шаг 5: перенаправить колонку
@@ -273,6 +388,10 @@ verify_speaker() {
 
 # ---------------------------------------------------------------------- запуск
 
+# AFTERTOUCH_LIB=1 — подключить файл как библиотеку функций, ничего не запуская
+# (так проверяются отдельные функции, см. tests/fix-aftertouch-test.sh).
+[ "${AFTERTOUCH_LIB:-0}" = "1" ] && return 0
+
 say "AfterTouch — перенастройка под текущую сеть"
 
 if ! find_server; then
@@ -280,9 +399,11 @@ if ! find_server; then
   say "Планшет не найден. Что проверить:"
   say "  1. Планшет включён и разблокирован. После перезагрузки сервер стартует"
   say "     только после первого разблокирования экрана — это нормально."
-  say "  2. Планшет в той же сети, что и компьютер, и его адрес оканчивается на .$LAST_OCTET"
-  say "     (Настройки -> Wi-Fi -> сеть -> Настройки IP -> Статический)."
+  say "  2. Планшет в той же сети, что и компьютер. Его адрес можно посмотреть"
+  say "     в списке клиентов роутера и ввести, когда скрипт спросит."
   say "  3. Колонки подключены к этой же сети."
+  say ""
+  say "Запусти скрипт ещё раз, когда планшет будет доступен."
   exit 1
 fi
 
