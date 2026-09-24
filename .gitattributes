@@ -1,4 +1,5 @@
 * text=auto eol=lf
-# cmd.exe needs CRLF in batch files, otherwise it misparses them.
-*.bat text eol=crlf
-*.cmd text eol=crlf
+# cmd.exe misparses batch files with LF endings. Store them byte-for-byte
+# with CRLF (no conversion), so clone AND GitHub "Download ZIP" both get CRLF.
+*.bat -text
+*.cmd -text
