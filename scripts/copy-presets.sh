@@ -1,18 +1,15 @@
 #!/usr/bin/env bash
 # Копирует станции на кнопках 1-6 с одной колонки на другую.
 #
-#   bash scripts/copy-presets.sh <IP колонки-образца> <IP колонки-получателя>
+#   bash scripts/copy-presets.sh                         # сам найдёт колонки и спросит
+#   bash scripts/copy-presets.sh <IP образца> <IP получателя>
 #
+# Без адресов скрипт ищет колонки во всех сетях компьютера, берёт за образец
+# колонку, где станций больше, и перед записью спрашивает подтверждение.
 # Работает напрямую с колонками по их API (порт 8090), планшет не нужен.
 # Перед записью копия пресетов получателя ложится в data/backup/.
 # Повторный запуск безвреден.
 set -uo pipefail
-
-FROM="${1:-}"; TO="${2:-}"
-if [ -z "$FROM" ] || [ -z "$TO" ]; then
-  echo "Использование: bash scripts/copy-presets.sh <IP образца> <IP получателя>" >&2
-  exit 1
-fi
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKUP_DIR="$REPO_DIR/data/backup"
@@ -23,13 +20,86 @@ name_of() { curl -s -m 5 "http://$1:8090/info" | grep -o '<name>[^<]*' | sed 's/
 # один пресет на строку: <preset id="N" ...>...</preset>
 preset_lines() { sed 's/<preset /\n<preset /g; s#</presets>#\n#' | grep '^<preset id="[1-6]"'; }
 
-key() { # нажать и отпустить кнопку колонки
+titles() { # "N название" для каждой занятой кнопки
+  curl -s -m 8 "http://$1:8090/presets" | preset_lines \
+    | sed -E 's/^<preset id="([1-6])".*<itemName>([^<]*).*/\1 \2/'
+}
+
+count_presets() { titles "$1" | grep -c . ; }
+
+key() { # нажать и отпустить кнопку колонки: key <IP> <кнопка>
   local k
   for k in press release; do
     curl -s -m 5 -X POST -H 'Content-Type: application/xml' \
-      --data-raw "<key state=\"$k\" sender=\"Gabbo\">$1</key>" "http://$TO:8090/key" >/dev/null
+      --data-raw "<key state=\"$k\" sender=\"Gabbo\">$2</key>" "http://$1:8090/key" >/dev/null
   done
 }
+
+local_prefixes() { # подсети сетевых адаптеров компьютера (только домашние диапазоны)
+  ipconfig 2>/dev/null | tr -d '\r' \
+    | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' \
+    | grep -E '^(192\.168|10|172\.(1[6-9]|2[0-9]|3[01]))\.' \
+    | sed -E 's/\.[0-9]+$//' | sort -u
+}
+
+find_speakers() { # IP всех колонок SoundTouch в сетях компьютера
+  local prefix i
+  for prefix in $(local_prefixes); do
+    for i in $(seq 1 254); do
+      ( curl -s -m 2 "http://$prefix.$i:8090/info" 2>/dev/null | grep -q '<info ' \
+          && echo "$prefix.$i" ) &
+    done
+    wait
+  done | sort -t. -k4 -n
+}
+
+FROM="${1:-}"; TO="${2:-}"
+
+if [ -z "$FROM" ] || [ -z "$TO" ]; then
+  echo "Ищу колонки в сети (до минуты)..."
+  mapfile -t SPEAKERS < <(find_speakers)
+  if [ "${#SPEAKERS[@]}" -lt 2 ]; then
+    echo
+    echo "Нашлось колонок: ${#SPEAKERS[@]}, а нужно две."
+    echo "Проверьте, что обе колонки включены и компьютер подключён к той же сети (Wi-Fi или хотспот)."
+    [ "${#SPEAKERS[@]}" = 1 ] && echo "Нашлась только: ${SPEAKERS[0]} ($(name_of "${SPEAKERS[0]}"))"
+    exit 1
+  fi
+
+  echo
+  echo "Найдены колонки:"
+  best=""; best_n=-1
+  for n in "${!SPEAKERS[@]}"; do
+    ip="${SPEAKERS[$n]}"; c=$(count_presets "$ip")
+    printf '  %d) %-16s %-28s станций на кнопках: %s\n' "$((n + 1))" "$ip" "$(name_of "$ip")" "$c"
+    [ "$c" -gt "$best_n" ] && { best="$ip"; best_n="$c"; }
+  done
+
+  if [ "$best_n" -le 0 ]; then
+    echo; echo "Ни на одной колонке нет станций на кнопках — копировать нечего."
+    exit 1
+  fi
+
+  FROM="$best"
+  if [ "${#SPEAKERS[@]}" = 2 ]; then
+    for ip in "${SPEAKERS[@]}"; do [ "$ip" != "$FROM" ] && TO="$ip"; done
+  else
+    echo
+    printf 'Номер колонки, НА которую копировать: '
+    read -r num || exit 1
+    TO="${SPEAKERS[$((num - 1))]:-}"
+    [ -z "$TO" ] || [ "$TO" = "$FROM" ] && { echo "Неверный номер."; exit 1; }
+  fi
+
+  echo
+  echo "Станции с «$(name_of "$FROM")» ($FROM):"
+  titles "$FROM" | sed 's/^/  кнопка /'
+  echo
+  printf 'Записать их на «%s» (%s)? Enter — да, n — отмена: ' "$(name_of "$TO")" "$TO"
+  read -r answer || { echo; echo "Отменено."; exit 1; }
+  case "$answer" in n|N|н|Н|no|нет) echo "Отменено, ничего не менял."; exit 0 ;; esac
+  echo
+fi
 
 from_name=$(name_of "$FROM"); to_name=$(name_of "$TO")
 [ -z "$from_name" ] && { echo "Колонка $FROM не отвечает. Проверьте адрес и что она в той же сети." >&2; exit 1; }
@@ -44,10 +114,10 @@ mkdir -p "$BACKUP_DIR"
 curl -s -m 8 "http://$TO:8090/presets" > "$BACKUP_DIR/presets-$TO-$STAMP.xml"
 echo "Копия старых кнопок получателя: data/backup/presets-$TO-$STAMP.xml"
 
-# Если получатель играет, запись в играющий слот молча не применяется — ставим на паузу-выключение.
+# Если получатель играет, запись в играющий слот молча не применяется — выключаем его.
 if ! curl -s -m 5 "http://$TO:8090/now_playing" | grep -q 'source="STANDBY"'; then
   echo "Выключаю получателя на время записи..."
-  key POWER; sleep 4
+  key "$TO" POWER; sleep 4
 fi
 
 echo
@@ -62,12 +132,11 @@ done <<< "$src"
 
 # Сверка: названия на кнопках обеих колонок должны совпасть.
 sleep 2
-titles() { curl -s -m 8 "http://$1:8090/presets" | preset_lines \
-  | sed -E 's/^<preset id="([1-6])".*<itemName>([^<]*).*/\1 \2/'; }
 if [ "$(titles "$FROM")" = "$(titles "$TO")" ]; then
   echo; echo "Готово: кнопки на «$to_name» совпадают с «$from_name»."
 else
   echo; echo "Внимание: кнопки совпали не полностью. Сейчас на «$to_name»:"
   titles "$TO" | sed 's/^/  /'
+  echo "Запустите скрипт ещё раз — повторный запуск безопасен."
   exit 1
 fi
