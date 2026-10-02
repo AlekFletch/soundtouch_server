@@ -311,6 +311,55 @@ migrate_speaker() {
   return 1
 }
 
+
+# ------------------------------------- шаг 5б: привязка к аккаунту (после сброса)
+
+account_of() { # аккаунт, к которому привязана колонка (пусто — не привязана)
+  curl -s -m 6 "http://$1:8090/info" 2>/dev/null | grep -a -oE 'margeAccountUUID>[^<]+' | head -1 | sed 's/.*>//'
+}
+
+server_account() { # единственный числовой аккаунт на сервере (default не считается)
+  ssh_t "ls ~/aftertouch/data/accounts 2>/dev/null" 2>/dev/null | tr -d '\r' | grep -E '^[0-9]+$'
+}
+
+pair_speaker() {
+  local ip="$1" acc accounts
+  acc=$(account_of "$ip")
+  if [ -n "$acc" ]; then
+    say "  $ip: привязана к аккаунту $acc"
+    return 0
+  fi
+
+  # после сброса колонка принимает команды, но к серверу за станциями не ходит
+  accounts=$(server_account)
+  if [ "$(printf '%s\n' "$accounts" | grep -c .)" != "1" ]; then
+    warn "$ip: не привязана к аккаунту, а на сервере аккаунтов не один (${accounts:-нет}) — привяжи вручную: soundtouch-cli --host $ip setup pair --account <номер> --service-url http://$SERVER_IP:8000"
+    return 1
+  fi
+
+  say "  $ip: не привязана к аккаунту — привязываю к $accounts"
+  cli "$ip" setup pair --account "$accounts" --service-url "http://$SERVER_IP:8000" | tail -1 | sed 's/^/    /'
+  CHANGED=1
+  if [ "$(account_of "$ip")" = "$accounts" ]; then return 0; fi
+  warn "$ip: привязать к аккаунту $accounts не удалось"
+  return 1
+}
+
+count_presets() { curl -s -m 8 "http://$1:8090/presets" 2>/dev/null | grep -a -o '<preset id=' | grep -c .; }
+
+fill_empty_presets() { # пустые кнопки заполняем станциями с соседней колонки
+  local ip="$1" other
+  [ "$(count_presets "$ip")" != "0" ] && return 0
+  for other in $SPEAKERS; do
+    [ "$other" = "$ip" ] && continue
+    [ "$(count_presets "$other")" = "0" ] && continue
+    say "  $ip: кнопки пусты — копирую станции с $other"
+    bash "$REPO_DIR/scripts/copy-presets.sh" "$other" "$ip" 2>&1 | sed 's/^/    /'
+    CHANGED=1
+    return 0
+  done
+  warn "$ip: кнопки пусты, а скопировать не с чего — задай станции на странице сервера"
+}
 # ----------------------------------------------------------- шаг 6: пресеты
 
 fix_presets() {
@@ -415,7 +464,11 @@ if find_speakers; then
   step "Шаг 5. Проверяю, куда смотрят колонки"
   for spk in $SPEAKERS; do migrate_speaker "$spk"; done
 
+  step "Шаг 5б. Проверяю привязку колонок к аккаунту"
+  for spk in $SPEAKERS; do pair_speaker "$spk"; done
+
   step "Шаг 6. Проверяю пресеты"
+  for spk in $SPEAKERS; do fill_empty_presets "$spk"; done
   for spk in $SPEAKERS; do fix_presets "$spk"; done
 
   step "Шаг 7. Проверяю воспроизведение"

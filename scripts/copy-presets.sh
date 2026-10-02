@@ -130,9 +130,14 @@ while IFS= read -r line; do
   printf '  кнопка %s: %-25s %s\n' "$slot" "$title" "$([ "$code" = 200 ] && echo записана || echo "ОШИБКА (http $code)")"
 done <<< "$src"
 
-# Сверка: названия на кнопках обеих колонок должны совпасть.
+# Сверка по ссылкам: названия сравнивать нельзя, SoundTouch 10 хранит кириллицу
+# в другой кодировке (cp1251), хотя станция та же.
+locs() {
+  curl -s -m 8 "http://$1:8090/presets" | preset_lines \
+    | sed -E 's/^<preset id="([1-6])".*location="([^"]*)".*/\1 \2/'
+}
 sleep 2
-if [ "$(titles "$FROM")" = "$(titles "$TO")" ]; then
+if [ "$(locs "$FROM")" = "$(locs "$TO")" ]; then
   echo; echo "Готово: кнопки на «$to_name» совпадают с «$from_name»."
 else
   echo; echo "Внимание: кнопки совпали не полностью. Сейчас на «$to_name»:"

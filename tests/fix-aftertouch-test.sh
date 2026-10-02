@@ -71,6 +71,54 @@ echo "запомненные адреса"
 # последним запоминался набор из случая «вторая колонка добавляется к найденной»
 check "файл настроек записан" "SAVED_SPEAKER_OCTETS=\"11 179\"" "$(grep SAVED_SPEAKER_OCTETS "$CONF_FILE" | tail -1)"
 
+
+echo
+echo "привязка к аккаунту и пустые кнопки"
+SERVER_IP="192.168.1.216"; WARNINGS=(); CHANGED=0
+ACC_STATE=""            # что колонка 11 сейчас отвечает в margeAccountUUID
+CALLS_FILE="$DIR/data/calls.test"; : > "$CALLS_FILE"; SERVER_ACCOUNTS="default
+8350196"
+
+curl() {
+  local url="${*: -1}"
+  case "$url" in
+    *192.168.1.11:8090/info)  printf "<info><margeAccountUUID>%s</margeAccountUUID></info>" "$([ -s "$CALLS_FILE" ] && grep -q "^pair" "$CALLS_FILE" && echo 8350196)" ;;
+    *192.168.1.179:8090/info) printf '<info><margeAccountUUID>8350196</margeAccountUUID></info>' ;;
+    *192.168.1.11:8090/presets)  printf '<presets />' ;;
+    *192.168.1.179:8090/presets) printf '<presets><preset id="1"></preset><preset id="2"></preset></presets>' ;;
+  esac
+}
+ssh_t() { printf '%s\n' "$SERVER_ACCOUNTS"; }
+cli() { echo "pair|$*" >> "$CALLS_FILE"; ACC_STATE_FILE=1; echo "ok"; }
+bash() { echo "copy|$*" >> "$CALLS_FILE"; }
+
+check "пустой аккаунт читается как пусто" "" "$(account_of 192.168.1.11)"
+check "аккаунт колонки 179" "8350196" "$(account_of 192.168.1.179)"
+check "аккаунт сервера — числовой, без default" "8350196" "$(server_account)"
+check "кнопки считаются" "2" "$(count_presets 192.168.1.179)"
+check "пустые кнопки: ноль" "0" "$(count_presets 192.168.1.11)"
+
+pair_speaker 192.168.1.179 >/dev/null
+check "привязанную колонку не трогаем" "" "$(cat "$CALLS_FILE")"
+
+pair_speaker 192.168.1.11 >/dev/null
+case "$(cat "$CALLS_FILE")" in
+  *"192.168.1.11 setup pair --account 8350196 --service-url http://192.168.1.216:8000"*) ok "непривязанная колонка привязывается к аккаунту сервера" ;;
+  *) bad "непривязанная колонка привязывается к аккаунту сервера" "setup pair --account 8350196" "$(cat "$CALLS_FILE")" ;;
+esac
+
+: > "$CALLS_FILE"; ACC_STATE=""; SERVER_ACCOUNTS="1111111
+2222222"; WARNINGS=()
+pair_speaker 192.168.1.11 >/dev/null
+check "два аккаунта на сервере: не угадываем, предупреждаем" "0|1" "$(grep -c ^pair "$CALLS_FILE")|${#WARNINGS[@]}"
+
+SPEAKERS="192.168.1.11 192.168.1.179"; : > "$CALLS_FILE"
+fill_empty_presets 192.168.1.11 >/dev/null
+check "пустая колонка заполняется с соседней" "copy|scripts/copy-presets.sh 192.168.1.179 192.168.1.11" "$(sed "s#$DIR/##" "$CALLS_FILE")"
+: > "$CALLS_FILE"
+fill_empty_presets 192.168.1.179 >/dev/null
+check "колонку с кнопками не трогаем" "" "$(cat "$CALLS_FILE")"
+rm -f "$CALLS_FILE"; unset -f curl ssh_t cli bash
 rm -f "$CONF_FILE_OVERRIDE"
 echo
 printf 'итог: успешно %d, сбоев %d\n' "$PASS" "$FAIL"
