@@ -119,6 +119,13 @@ check "пустая колонка заполняется с соседней" "
 fill_empty_presets 192.168.1.179 >/dev/null
 check "колонку с кнопками не трогаем" "" "$(cat "$CALLS_FILE")"
 rm -f "$CALLS_FILE"; unset -f curl ssh_t cli bash
+
+echo
+echo "translit — названия кнопок для SoundTouch 10"
+eval "$(sed -n '/^translit() {/,/^}/p' "$DIR/scripts/copy-presets.sh")"
+check "кириллица становится латиницей" "Radio Romantika" "$(printf 'Радио Романтика' | translit)"
+check "ь, ъ пропадают, щ — shch" "Ezhik Shchuka" "$(printf 'Ёжик Щука' | translit)"
+check "латиница и цифры не меняются" "101.ru Relax Gold" "$(printf '101.ru Relax Gold' | translit)"
 rm -f "$CONF_FILE_OVERRIDE"
 echo
 printf 'итог: успешно %d, сбоев %d\n' "$PASS" "$FAIL"

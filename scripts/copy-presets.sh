@@ -20,6 +20,17 @@ name_of() { curl -s -m 5 "http://$1:8090/info" | grep -o '<name>[^<]*' | sed 's/
 # один пресет на строку: <preset id="N" ...>...</preset>
 preset_lines() { sed 's/<preset /\n<preset /g; s#</presets>#\n#' | grep '^<preset id="[1-6]"'; }
 
+translit() { # кириллица -> латиница: SoundTouch 10 портит UTF-8 в названиях кнопок
+  local args=() pair
+  for pair in а:a б:b в:v г:g д:d е:e ё:e ж:zh з:z и:i й:y к:k л:l м:m н:n о:o п:p р:r с:s т:t у:u ф:f \
+              х:kh ц:ts ч:ch ш:sh щ:shch ъ: ы:y ь: э:e ю:yu я:ya \
+              А:A Б:B В:V Г:G Д:D Е:E Ё:E Ж:Zh З:Z И:I Й:Y К:K Л:L М:M Н:N О:O П:P Р:R С:S Т:T У:U Ф:F \
+              Х:Kh Ц:Ts Ч:Ch Ш:Sh Щ:Shch Ъ: Ы:Y Ь: Э:E Ю:Yu Я:Ya; do
+    args+=(-e "s/${pair%%:*}/${pair#*:}/g")
+  done
+  sed "${args[@]}"
+}
+
 titles() { # "N название" для каждой занятой кнопки
   curl -s -m 8 "http://$1:8090/presets" | preset_lines \
     | sed -E 's/^<preset id="([1-6])".*<itemName>([^<]*).*/\1 \2/'
@@ -121,14 +132,37 @@ if ! curl -s -m 5 "http://$TO:8090/now_playing" | grep -q 'source="STANDBY"'; th
 fi
 
 echo
-while IFS= read -r line; do
-  slot=$(printf '%s' "$line" | grep -o '^<preset id="[1-6]"' | grep -o '[1-6]')
-  item=$(printf '%s' "$line" | grep -o '<ContentItem.*</ContentItem>')
-  title=$(printf '%s' "$line" | grep -o '<itemName>[^<]*' | sed 's/<itemName>//')
-  code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/xml' \
-    --data-raw "<preset id=\"$slot\">$item</preset>" "http://$TO:8090/storePreset")
-  printf '  кнопка %s: %-25s %s\n' "$slot" "$title" "$([ "$code" = 200 ] && echo записана || echo "ОШИБКА (http $code)")"
-done <<< "$src"
+write_slots() { # write_slots [latin] — записать все кнопки; latin: названия латиницей
+  local mode="${1:-}" line slot item title shown code
+  while IFS= read -r line; do
+    slot=$(printf '%s' "$line" | grep -o '^<preset id="[1-6]"' | grep -o '[1-6]')
+    item=$(printf '%s' "$line" | grep -o '<ContentItem.*</ContentItem>')
+    title=$(printf '%s' "$line" | grep -o '<itemName>[^<]*' | sed 's/<itemName>//')
+    shown="$title"
+    if [ "$mode" = latin ]; then
+      shown=$(printf '%s' "$title" | translit)
+      item=$(printf '%s' "$item" | sed "s#<itemName>[^<]*</itemName>#<itemName>$shown</itemName>#")
+    fi
+    code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/xml' \
+      --data-raw "<preset id=\"$slot\">$item</preset>" "http://$TO:8090/storePreset")
+    printf '  кнопка %s: %-25s %s\n' "$slot" "$shown" "$([ "$code" = 200 ] && echo записана || echo "ОШИБКА (http $code)")"
+  done <<< "$src"
+}
+
+# SoundTouch 10 хранит русские названия в cp1251 и отдаёт список не в UTF-8:
+# плеер сервера такой список не читает и показывает пустые кнопки.
+valid_utf8() { curl -s -m 8 "http://$1:8090/presets" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; }
+
+write_slots
+sleep 2
+if ! valid_utf8 "$TO"; then
+  echo
+  echo "Колонка «$to_name» отдаёт русские названия не в UTF-8 — плеер сервера покажет пустые кнопки."
+  echo "Записываю названия латиницей (ссылки на станции те же):"
+  write_slots latin
+  sleep 2
+  valid_utf8 "$TO" || echo "Внимание: список кнопок всё ещё не читается как UTF-8."
+fi
 
 # Сверка по ссылкам: названия сравнивать нельзя, SoundTouch 10 хранит кириллицу
 # в другой кодировке (cp1251), хотя станция та же.
